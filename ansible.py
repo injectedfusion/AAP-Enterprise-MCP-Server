@@ -58,9 +58,113 @@ async def job_status(job_id: int) -> Any:
 
 
 @mcp.tool()
-async def job_logs(job_id: int) -> str:
-    """Retrieve logs for a job."""
-    return await make_request(f"{AAP_URL}/jobs/{job_id}/stdout/?format=txt")
+async def job_digest(job_id: int) -> dict:
+    """Get structured digest of job results - summary, failures, and changes.
+
+    Returns a bounded, AI-friendly summary instead of raw logs.
+    Use job_context() to drill into specific failures if needed.
+    """
+    # Get job status first
+    job = await make_request(f"{AAP_URL}/jobs/{job_id}/")
+    if isinstance(job, str) and job.startswith("Error"):
+        return {"error": job}
+
+    # Get summary stats from playbook_on_stats event
+    stats_response = await make_request(
+        f"{AAP_URL}/jobs/{job_id}/job_events/?event=playbook_on_stats"
+    )
+    stats = {}
+    if isinstance(stats_response, dict) and stats_response.get("results"):
+        event_data = stats_response["results"][0].get("event_data", {})
+        stats = {
+            "ok": sum(event_data.get("ok", {}).values()),
+            "changed": sum(event_data.get("changed", {}).values()),
+            "failed": sum(event_data.get("failures", {}).values()),
+            "skipped": sum(event_data.get("skipped", {}).values()),
+            "unreachable": sum(event_data.get("dark", {}).values()),
+        }
+
+    # Get failures
+    failures_response = await make_request(
+        f"{AAP_URL}/jobs/{job_id}/job_events/?event__in=runner_on_failed,runner_item_on_failed&page_size=50"
+    )
+    failures = []
+    if isinstance(failures_response, dict):
+        for e in failures_response.get("results", []):
+            event_data = e.get("event_data", {})
+            res = event_data.get("res", {})
+            # Extract error message from various possible locations
+            msg = res.get("msg", "") or res.get("stderr", "") or ""
+            # Truncate long messages
+            if len(msg) > 500:
+                msg = msg[:500] + "..."
+            failures.append({
+                "event_id": e.get("id"),
+                "task": e.get("task", ""),
+                "task_path": event_data.get("task_path", ""),
+                "host": e.get("host_name", ""),
+                "msg": msg,
+                "rc": res.get("rc"),
+            })
+
+    # Get changes (useful for successful jobs)
+    changes_response = await make_request(
+        f"{AAP_URL}/jobs/{job_id}/job_events/?event=runner_on_changed&page_size=50"
+    )
+    changes = []
+    if isinstance(changes_response, dict):
+        for e in changes_response.get("results", []):
+            changes.append({
+                "task": e.get("task", ""),
+                "host": e.get("host_name", ""),
+            })
+
+    return {
+        "job_id": job_id,
+        "name": job.get("name", ""),
+        "status": job.get("status", ""),
+        "failed": job.get("failed", False),
+        "elapsed": job.get("elapsed", 0),
+        "summary": stats,
+        "failures": failures,
+        "changed": changes,
+    }
+
+
+@mcp.tool()
+async def job_context(job_id: int, event_id: int = None, lines: int = 30) -> str:
+    """Get bounded stdout context around a specific event or job start.
+
+    Use this to drill into details after job_digest identifies a failure.
+    Returns at most 'lines' lines of output to preserve context budget.
+
+    Args:
+        job_id: The job ID
+        event_id: Optional event ID from job_digest failures. If not provided, returns job start.
+        lines: Max lines to return (default 30, max 100)
+    """
+    lines = min(lines, 100)  # Hard cap
+
+    if event_id:
+        # Get the specific event to find line numbers
+        event = await make_request(f"{AAP_URL}/job_events/{event_id}/")
+        if isinstance(event, str) and event.startswith("Error"):
+            return event
+        start_line = max(0, event.get("start_line", 0) - lines // 2)
+        end_line = event.get("end_line", start_line) + lines // 2
+    else:
+        start_line = 0
+        end_line = lines
+
+    # Get bounded stdout
+    stdout = await make_request(
+        f"{AAP_URL}/jobs/{job_id}/stdout/?format=txt&start_line={start_line}&end_line={end_line}"
+    )
+    return stdout
+
+
+# REMOVED: job_logs - use job_digest() for structured output or job_context() for bounded raw output
+# The old job_logs returned unbounded stdout which caused AI context exhaustion
 
 
 @mcp.tool()
