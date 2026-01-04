@@ -44,10 +44,13 @@ async def get_inventory(inventory_id: str) -> Any:
 
 
 @mcp.tool()
-async def run_job(template_id: int, extra_vars: dict = {}) -> Any:
-    """Run a job template by ID, optionally with extra_vars."""
+async def run_job(template_id: int, extra_vars: dict = {}, job_tags: list[str] = None) -> Any:
+    """Run a job template by ID, optionally with extra_vars and job_tags."""
+    payload = {"extra_vars": extra_vars}
+    if job_tags:
+        payload["job_tags"] = ",".join(job_tags)
     return await make_request(
-        f"{AAP_URL}/job_templates/{template_id}/launch/", method="POST", json={"extra_vars": extra_vars}
+        f"{AAP_URL}/job_templates/{template_id}/launch/", method="POST", json=payload
     )
 
 
@@ -271,9 +274,9 @@ async def create_job_template(
     if labels:
         payload["labels"] = labels
     if job_tags:
-        payload["job_tags"] = job_tags
+        payload["job_tags"] = ",".join(job_tags)
     if skip_tags:
-        payload["skip_tags"] = skip_tags
+        payload["skip_tags"] = ",".join(skip_tags)
     if extra_vars:
         payload["extra_vars"] = extra_vars
 
