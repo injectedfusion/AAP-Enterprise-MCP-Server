@@ -6,11 +6,12 @@ A comprehensive Model Context Protocol (MCP) server suite for Red Hat's automati
 
 ### Ansible Automation Platform (AAP) Integration
 - **Inventory Management**: List, create, update inventories and manage hosts/groups
-- **Job Management**: Run job templates, monitor job status, and retrieve logs
+- **Job Management**: Run job templates, monitor job status, and retrieve logs with granular tag filtering
 - **Project Management**: Create and manage SCM-based projects
-- **Template Management**: Create and manage job templates
+- **Template Management**: Create and manage job templates with job_tags and skip_tags support
 - **Host Operations**: Add/remove hosts, manage host variables and facts
 - **Ad-hoc Commands**: Execute ansible commands directly on inventory hosts
+- **Tag-Based Execution**: Filter playbook execution by tags at template creation or runtime
 
 ### Event-Driven Ansible (EDA) Integration
 - **Activation Management**: List, create, enable/disable EDA activations
@@ -279,6 +280,13 @@ result = await run_job(
     extra_vars={"target_env": "production", "app_version": "1.2.3"}
 )
 
+# Run job template with tag filtering (runtime override)
+result = await run_job(
+    template_id=5,
+    extra_vars={"target_env": "production"},
+    job_tags=["networking", "cilium"]  # Only run tasks tagged with these
+)
+
 # Check job status
 status = await job_status(result["job"])
 ```
@@ -301,6 +309,47 @@ await run_adhoc_command(
     module_name="setup",
     limit="web-server-01.example.com"
 )
+```
+
+### Creating Job Templates with Tag Filtering
+```python
+# Create job template that only runs specific playbook phases
+await create_job_template(
+    name="Deploy Networking Only",
+    project_id=8,
+    playbook="site.yml",
+    inventory_id=2,
+    job_tags=["networking", "cilium"],  # Filter to only networking tasks
+    description="Deploys only the networking layer (Cilium CNI)"
+)
+
+# Create template that skips certain tags
+await create_job_template(
+    name="Deploy Everything Except Tests",
+    project_id=8,
+    playbook="site.yml",
+    inventory_id=2,
+    skip_tags=["validate", "test"],  # Skip validation and test tasks
+    description="Full deployment excluding test phases"
+)
+
+# Create phase-specific templates for multi-phase playbooks
+# Example: 12-phase Kubernetes cluster restoration playbook
+phases = [
+    ("01 Talos Cluster", ["talos-cluster"]),
+    ("02 Networking", ["cilium"]),
+    ("03 CoreDNS", ["coredns"]),
+    # ... more phases
+]
+
+for name, tags in phases:
+    await create_job_template(
+        name=f"RK1 - {name}",
+        project_id=8,
+        playbook="ansible/site.yml",
+        inventory_id=2,
+        job_tags=tags
+    )
 ```
 
 ### Galaxy Content Discovery
